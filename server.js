@@ -9,7 +9,7 @@ app.use(express.json());
 
 // ===== OPENAI =====
 const openai = new OpenAI({
-  apiKey: "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"
+  apiKey: "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"
 });
 
 // ===== DATABASE =====
