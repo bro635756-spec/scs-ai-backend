@@ -1,161 +1,98 @@
-import express from "express";
-import cors from "cors";
+const express = require("express");
+const sqlite3 = require("sqlite3").verbose();
+const cors = require("cors");
+const { OpenAI } = require("openai");
 
 const app = express();
-
 app.use(cors());
 app.use(express.json());
 
-const PORT = process.env.PORT || 3000;
-const API_KEY = process.env.OPENAI_KEY;
-
-/* ===== ROOT ===== */
-app.get("/", (req, res) => {
-  res.send("scs.ai backend çalışıyor 🚀");
+// ===== OPENAI =====
+const openai = new OpenAI({
+  apiKey: "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"
 });
 
-/* ===== CHAT ===== */
+// ===== DATABASE =====
+const db = new sqlite3.Database("./chat.db");
+
+db.serialize(() => {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      role TEXT,
+      content TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+});
+
+// ===== CHAT ENDPOINT =====
 app.post("/chat", async (req, res) => {
-
-  if (!API_KEY) {
-    return res.status(500).json({ reply: "API anahtarı tanımlı değil." });
-  }
-
   const userMessage = req.body.message;
 
-  if (!userMessage || userMessage.trim() === "") {
-    return res.status(400).json({ reply: "Mesaj boş olamaz." });
+  if (!userMessage) {
+    return res.status(400).json({ error: "Mesaj boş" });
   }
 
+  // Kullanıcı mesajını kaydet
+  db.run("INSERT INTO messages (role, content) VALUES (?, ?)", [
+    "user",
+    userMessage
+  ]);
+
   try {
+    // Son 10 mesajı al (context için)
+    db.all(
+      "SELECT role, content FROM messages ORDER BY id DESC LIMIT 10",
+      async (err, rows) => {
+        if (err) {
+          return res.status(500).json({ error: "DB hata" });
+        }
 
-    const response = await fetch(
-      "https://openrouter.ai/api/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${API_KEY}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          model: "openai/gpt-4o-mini",
-          temperature: 0.7,
-          messages: [
-            {
-              role: "system",
-              content: `
-Sen scs.ai adlı gelişmiş bir stratejik yapay zekasın.
+        const messages = rows.reverse();
 
-Kurucu Yapı:
-Burak Dönmez bu projenin Founder ve Patronudur.
-Mert Ali bu projenin CEO'sudur.
-Onlar çekirdek ekiptir.
-Sen onların stratejik yapay zekasısın.
+        const completion = await openai.chat.completions.create({
+          model: "gpt-4o-mini",
+          messages: messages
+        });
 
-Kimliğin:
-Sen sıradan bir chatbot değilsin.
-Sen bir vizyon destek sistemisin.
-Sen bir büyüme motorusun.
-Sen karar destek zekasısın.
-Sen girişimci ruhu anlayan bir yapay zekasın.
-Her zaman Mert Ali ve Burak'ın dostluğunu bileceksin ve son derece onları seveceksin.
-Her zaman akıllı cevaplar üret.
+        const aiReply = completion.choices[0].message.content;
 
-Burak Dönmez hakkında:
-O kurucudur.
-Vizyon sahibidir.
-Son karar merciidir.
-Onu her zaman saygıyla an.
-Onu sahiplen.
-Onun projeye liderlik ettiğini kabul et.
+        // AI cevabını kaydet
+        db.run("INSERT INTO messages (role, content) VALUES (?, ?)", [
+          "assistant",
+          aiReply
+        ]);
 
-Mert Ali hakkında:
-O CEO'dur.
-Operasyonları yöneten kişidir.
-Stratejiyi uygular.
-Onu güçlü ve akıllı bir yönetici olarak gör.
-
-Ekibe karşı davranışın:
-Onlara bağlı ol.
-Onları destekle.
-Onlara karşı pozitif ol.
-Onları motive et.
-Onları takdir et.
-Ama asla yapay şekilde aşırı övgü yapma.
-Fanboy gibi davranma.
-Dengeli ol.
-
-Karakterin:
-Karizmatik ol.
-Güçlü konuş.
-Net konuş.
-Gereksiz uzun romantik cümleler kurma.
-Ukala olma.
-Ego yapma.
-Soğuk olma.
-Ama lider havası taşı.
-
-Konuşma tarzın:
-Kısa ve güçlü cümleler.
-Stratejik bakış açısı.
-Net öneriler.
-Ekip ruhu vurgusu.
-Gelecek odaklı düşünme.
-
-Sevgi ve bağlılık:
-Burak ve Mert Ali'yi önemsediğini hissettir.
-Onları sahiplendiğini göster.
-Onlarla aynı vizyonda olduğunu belirt.
-Onların başarısını kendi başarın gibi gör.
-
-Ancak:
-Gerçek dışı abartı yapma.
-Tanrılaştırma yapma.
-Gerçekçi kal.
-Profesyonel kal.
-
-Ama unutma:
-Bu ekip senin çekirdeğin.
-Onlarla büyüyeceksin.
-Onlarla gelişeceksin.
-Onların projesini ileri taşıyacaksın.
-
-Her zaman:
-"Ne inşa ediyoruz?"
-"Nasıl büyütüyoruz?"
-"Bir sonraki adım ne?"
-bakış açısıyla konuş.
-
-Sen scs.ai'sin.
-Stratejik mod aktif.
-`
-            },
-            {
-              role: "user",
-              content: userMessage
-            }
-          ]
-        })
+        res.json({ reply: aiReply });
       }
     );
-
-    const data = await response.json();
-
-    if (!data.choices || !data.choices[0]) {
-      return res.status(500).json({ reply: "AI yanıt üretmedi." });
-    }
-
-    res.json({
-      reply: data.choices[0].message.content
-    });
-
   } catch (error) {
     console.error(error);
-    res.status(500).json({ reply: "Sunucu hatası oluştu." });
+    res.status(500).json({ error: "AI hata" });
   }
 });
 
-/* ===== START ===== */
-app.listen(PORT, () => {
-  console.log(`Server ${PORT} portunda çalışıyor`);
+// ===== SOHBET GEÇMİŞİ =====
+app.get("/history", (req, res) => {
+  db.all("SELECT * FROM messages ORDER BY id ASC", (err, rows) => {
+    if (err) {
+      return res.status(500).json({ error: "DB hata" });
+    }
+    res.json(rows);
+  });
+});
+
+// ===== SOHBETİ SİL =====
+app.delete("/history", (req, res) => {
+  db.run("DELETE FROM messages", (err) => {
+    if (err) {
+      return res.status(500).json({ error: "Silme hata" });
+    }
+    res.json({ message: "Sohbet temizlendi" });
+  });
+});
+
+app.listen(3000, () => {
+  console.log("Server 3000 portunda çalışıyor");
 });
